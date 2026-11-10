@@ -10,6 +10,16 @@ At the end of the loaded sequence, Next can fetch additional listing pages. Each
 
 Context identity guards prevent completed requests from navigating a closed preview or applying navigation to a different object, folder, sort, or search context.
 
+## Prefetching
+
+While a preview is open, the previous and next previewable files are loaded in advance so navigation shows them without a spinner. The window slides: opening a preview loads both neighbours after the visible file has loaded, Next loads one more next file, and Previous loads one more previous file. Files outside the window are evicted.
+
+- Only neighbours smaller than 10 MB (by listing size) are prefetched. Larger files load when they become visible.
+- Text files are loaded in full, within the text preview size limit. Images get a signed URL and their bytes decoded in advance. Video, audio, and PDF files get metadata and a signed URL only.
+- Prefetching never loads additional listing pages.
+- Signed URLs are reused for 50 minutes and text for 5 minutes. Failed loads are not cached, and Retry always requests a fresh load.
+- Closing the preview, saving, object cache invalidation, and profile, bucket, or text-limit changes discard prefetched content. Saving prefetched text remains ETag-guarded.
+
 ## Controls and draft protection
 
 - Left and Right move between previews; Space toggles file selection. Space on a focused button retains the button's native activation.
@@ -25,6 +35,8 @@ The existing image viewer and BaseDialog remain authoritative. Preserve their li
 | Source | Responsibility |
 | --- | --- |
 | `src/hooks/usePreviewNavigation.ts` | Previewable sequence, boundaries, bounded pagination, retry feedback, and stale-result guards |
+| `src/lib/previewPrefetch.ts` | Shared preview loader, prefetch size limit, and request cache with expiry |
+| `src/hooks/usePreviewPrefetch.ts` | Sliding previous/next prefetch window and cache clearing |
 | `src/lib/objectSort.ts` | Shared table and preview comparison for name, size, date, and storage class |
 | `src/components/dialogs/ObjectPreviewDialog.tsx` | Mixed file previews, selection controls, keyboard exclusions, editing and discard protection |
 | `src/components/dialogs/ImagePreviewViewer.tsx` | Existing image rendering, zoom and pan, plus selection and navigation controls |

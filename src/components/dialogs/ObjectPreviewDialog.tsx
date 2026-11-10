@@ -20,7 +20,7 @@ import { BaseDialog } from '../common/BaseDialog';
 import ImagePreviewViewer from './ImagePreviewViewer';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { getEditorLanguage, getObjectExtension, getObjectKind, getObjectName } from '@/lib/objectCapabilities';
-import { useSettingsStore } from '@/store/settingsStore';
+import { previewCache, usePreviewContext, type PreviewPayload } from '@/lib/previewPrefetch';
 
 interface ObjectPreviewDialogProps {
   open: boolean;
@@ -54,7 +54,7 @@ export default function ObjectPreviewDialog({
   onToggleSelect,
 }: ObjectPreviewDialogProps) {
   const theme = useTheme();
-  const maxTextPreviewSizeMb = useSettingsStore((state) => state.maxTextPreviewSizeMb);
+  const previewContext = usePreviewContext(bucketName, bucketRegion);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [content, setContent] = useState<string>('');
@@ -91,6 +91,9 @@ export default function ObjectPreviewDialog({
   // Monaco assigns a new version even when restoring the original text.
   const hasChanges = editedContent !== content;
 
+  // Prefetched content only lives while a preview is open; reopening always loads fresh.
+  useEffect(() => { if (open) return () => previewCache.clear(); }, [open]);
+
   useEffect(() => {
     if (!open || !objectKey) return;
     const requestId = ++loadRequestIdRef.current;
@@ -115,11 +118,31 @@ export default function ObjectPreviewDialog({
         pdfLoadingTimeoutRef.current = null;
       }
 
-      const maxPreviewBytes = maxTextPreviewSizeMb * 1024 * 1024;
+      const isCurrent = () => !cancelled && requestId === loadRequestIdRef.current;
+      const apply = (payload: PreviewPayload) => {
+        setContentType(payload.contentType);
+        if (payload.kind === 'unavailable') { setError(payload.message); return; }
+        if (payload.kind === 'text') {
+          // Even if empty, it's valid content
+          setContent(payload.content);
+          setEditedContent(payload.content);
+          setTextIdentity({ etag: payload.etag, profileId: payload.profileId });
+          return;
+        }
+        if (payload.objectKind === 'pdf') {
+          setIsPdfLoading(true);
+          pdfLoadingTimeoutRef.current = setTimeout(() => { if (isCurrent()) setIsPdfLoading(false); }, 5000);
+        }
+        setPresignedUrl(payload.url);
+      };
+
+      // A prefetched neighbour renders in the same batch as the reset above, without a spinner.
+      const prefetched = previewCache.peek(previewContext, objectKey);
+      if (prefetched) { apply(prefetched); setIsLoading(false); return; }
 
       // Safety timeout to prevent infinite spinner
       loadTimeoutRef.current = setTimeout(() => {
-        if (!cancelled && requestId === loadRequestIdRef.current) {
+        if (isCurrent()) {
           console.error("Content loading timed out");
           setIsLoading(false);
           setError("Loading timed out. Please try again.");
@@ -127,59 +150,8 @@ export default function ObjectPreviewDialog({
       }, 120000);
 
       try {
-        let resolvedContentType: string | null = null;
-        let resolvedObjectSize = objectSize;
-        try {
-          const metadata = await objectApi.getObjectMetadata(bucketName, bucketRegion, objectKey);
-          resolvedContentType = metadata.content_type;
-          resolvedObjectSize = metadata.size;
-          if (!cancelled && requestId === loadRequestIdRef.current) {
-            setContentType(metadata.content_type);
-          }
-        } catch (metadataErr) {
-          console.warn('Failed to load object metadata, falling back to filename-based detection:', metadataErr);
-        }
-
-        if (cancelled || requestId !== loadRequestIdRef.current) return;
-
-        const resolvedKind = getObjectKind(filename, resolvedContentType);
-        if (resolvedKind === 'text' && resolvedObjectSize && resolvedObjectSize > maxPreviewBytes) {
-          setError(`File is too large to preview (${(resolvedObjectSize / 1024 / 1024).toFixed(2)} MB). Increase the ${maxTextPreviewSizeMb} MB text preview limit in Settings or download it.`);
-          return;
-        }
-
-        if (resolvedKind === 'image' || resolvedKind === 'audio' || resolvedKind === 'video' || resolvedKind === 'pdf') {
-          // Get presigned URL for preview
-          if (resolvedKind === 'pdf') {
-             setIsPdfLoading(true);
-             pdfLoadingTimeoutRef.current = setTimeout(() => {
-               if (!cancelled && requestId === loadRequestIdRef.current) {
-                 setIsPdfLoading(false);
-               }
-             }, 5000);
-          }
-          const url = await objectApi.getPresignedUrl(bucketName, bucketRegion, objectKey, 3600);
-          if (!cancelled && requestId === loadRequestIdRef.current) {
-            setPresignedUrl(url);
-          }
-        } else if (resolvedKind === 'text') {
-          // Get text content
-          const textContent = await objectApi.getObjectContent(
-            bucketName,
-            bucketRegion,
-            objectKey,
-            maxPreviewBytes
-          );
-          
-          // Even if empty, it's valid content
-          if (!cancelled && requestId === loadRequestIdRef.current) {
-            setContent(textContent.content);
-            setEditedContent(textContent.content);
-            setTextIdentity({ etag: textContent.e_tag, profileId: textContent.profile_id });
-          }
-        } else {
-          setError('This object is not previewable in the app. Please download it to inspect locally.');
-        }
+        const payload = await previewCache.get(previewContext, objectKey, objectSize);
+        if (isCurrent()) apply(payload);
       } catch (err) {
         console.error("Failed to load object content:", err);
         if (!cancelled && requestId === loadRequestIdRef.current) {
@@ -210,7 +182,7 @@ export default function ObjectPreviewDialog({
         pdfLoadingTimeoutRef.current = null;
       }
     };
-  }, [open, objectKey, bucketName, bucketRegion, objectSize, startInEditMode, filename, maxTextPreviewSizeMb, reloadAttempt]);
+  }, [open, objectKey, objectSize, startInEditMode, previewContext, reloadAttempt]);
 
   const handleSave = async () => {
     if (!isEditing || isSaving || !textIdentity?.etag) return;
@@ -221,6 +193,7 @@ export default function ObjectPreviewDialog({
 
     try {
       const etag = await objectApi.putObjectContent(bucketName, bucketRegion, objectKey, editedContent, textIdentity.etag, textIdentity.profileId);
+      previewCache.delete(previewContext, objectKey);
       if (requestId !== loadRequestIdRef.current) return;
       setTextIdentity({ ...textIdentity, etag });
       setContent(editedContent);
@@ -277,7 +250,7 @@ export default function ObjectPreviewDialog({
       onNext={navigation ? navigation.onNext : onNavigateImage && index >= 0 && index < imageSequence.length - 1 ? () => onNavigateImage(imageSequence[index + 1]) : undefined}
       navigationLabel={navigation ? 'file' : 'image'} navigationBusy={navigation?.busy} navigationError={navigation?.error}
       isSelected={isSelected} onToggleSelect={onToggleSelect}
-      onClose={handleClose} onRetry={() => setReloadAttempt(attempt => attempt + 1)}
+      onClose={handleClose} onRetry={() => { previewCache.delete(previewContext, objectKey); setReloadAttempt(attempt => attempt + 1); }}
     />;
   }
 

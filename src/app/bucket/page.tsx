@@ -66,6 +66,8 @@ import PermissionsDialog from '@/components/dialogs/PermissionsDialog';
 import ObjectPreviewDialog from '@/components/dialogs/ObjectPreviewDialog';
 import { canObjectBeEdited, getObjectName } from '@/lib/objectCapabilities';
 import { usePreviewNavigation } from '@/hooks/usePreviewNavigation';
+import { usePreviewPrefetch } from '@/hooks/usePreviewPrefetch';
+import { usePreviewContext } from '@/lib/previewPrefetch';
 import PresignedUrlDialog from '@/components/dialogs/PresignedUrlDialog';
 import PublicUrlsDialog from '@/components/dialogs/PublicUrlsDialog';
 import UrlImportDialog from '@/components/dialogs/UrlImportDialog';
@@ -327,6 +329,11 @@ function BucketContent() {
     objectKey: previewKey, open: previewOpen && previewScope === viewKey,
     hasMore: !isDeepSearch && hasMore, query: isDeepSearch ? '' : deferredSearchQuery.trim(), loadMore,
     onNavigate: object => { setPreviewKey(object.key); setPreviewSize(object.size); setStartInEditMode(false); },
+  });
+  const previewContext = usePreviewContext(bucketName || '', bucketRegion);
+  usePreviewPrefetch({
+    sequence: previewNavigation.sequence, index: previewNavigation.index,
+    open: previewOpen && previewScope === viewKey, ctx: previewContext,
   });
 
   // Presigned URL Dialog State

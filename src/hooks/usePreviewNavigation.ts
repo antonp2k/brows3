@@ -60,5 +60,5 @@ export function usePreviewNavigation({ objects, field, direction, context, objec
     } catch (e) { if (current()) report(String(e)); }
     finally { if (lock.current === identity) { lock.current = null; if (current()) setBusy(null); } }
   }
-  return { index, total: sequence.length, previous: index > 0, next: index >= 0 && (index < sequence.length - 1 || hasMore), busy: busy === latest.current, error: error?.identity === latest.current ? error.message : '', navigate };
+  return { sequence, index, total: sequence.length, previous: index > 0, next: index >= 0 && (index < sequence.length - 1 || hasMore), busy: busy === latest.current, error: error?.identity === latest.current ? error.message : '', navigate };
 }

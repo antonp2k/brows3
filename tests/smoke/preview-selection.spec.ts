@@ -89,3 +89,31 @@ test('discarding edits resets the baseline when editing is reopened', async ({ p
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(backend.calls.filter(call => call.command === 'put_object_content')).toHaveLength(0);
 });
+
+test('previews prefetch small neighbours and only fetch the newly adjacent file on each step', async ({ page, backend }) => {
+  backend.objects.push({ key: 'zz.svg', size: 20 * 1024 * 1024, last_modified: null, storage_class: 'STANDARD' });
+  const loads = (key: string) => backend.calls.filter(call => call.command === 'get_object_metadata' && call.args.key === key).length;
+  await page.goto(bucket);
+  await page.getByRole('row').filter({ hasText: 'a.svg' }).getByTitle('Preview', { exact: true }).click();
+  await expect(page.getByRole('img', { name: 'a.svg' })).toBeVisible();
+  await expect.poll(() => loads('b.txt')).toBe(1);
+  expect(loads('z.svg')).toBe(0);
+
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('textbox', { name: 'Editor content' })).toBeVisible();
+  await expect.poll(() => loads('z.svg')).toBe(1);
+  expect([loads('a.svg'), loads('b.txt')]).toEqual([1, 1]);
+
+  await page.getByRole('button', { name: 'Next file', exact: true }).click();
+  await expect(page.getByRole('img', { name: 'z.svg' })).toBeVisible();
+  // zz.svg is 20 MB, so it loads only when it becomes the visible file.
+  await page.waitForTimeout(300);
+  expect([loads('z.svg'), loads('zz.svg')]).toEqual([1, 0]);
+  await page.getByRole('button', { name: 'Next file', exact: true }).click();
+  await expect(page.getByRole('img', { name: 'zz.svg' })).toBeVisible();
+  expect(loads('zz.svg')).toBe(1);
+
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.getByRole('img', { name: 'z.svg' })).toBeVisible();
+  expect(loads('z.svg')).toBe(1);
+});
