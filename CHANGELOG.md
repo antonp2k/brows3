@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Select or deselect files inside the existing preview, with previous/next navigation across previewable files in table order, keyboard controls, pagination safeguards, and unsaved-edit protection. Selection stays in the table after closing. Adapted from @antonp2k's contribution in PR [#39](https://github.com/rgcsekaraa/brows3/pull/39), retaining the current image viewer and zoom controls.
+- Local preview cache: previewed and prefetched images, PDFs and text files are kept on disk under `<profile>/<bucket>/<object key>`, mirroring the remote layout. A copy is reused only while its size, modification date and ETag match the remote object; otherwise a new copy is downloaded. When the server cannot be reached, the last copy is shown with an offline label. Configurable size limit with least-recently-used eviction and a Clear button in Settings.
 - Saved local-folder-to-S3 sync jobs with manual runs or in-app interval schedules, explicit future-upload approval, filters, saved bandwidth limits, pause/resume, confirmed cancellation and deletion, and completion/failure notifications.
 - Durable job recovery that pauses interrupted, failed, or missed-while-closed runs, prevents overlapping runs, and prevents multiple Brows3 instances from executing the same schedules. Jobs always compare fresh content and retain the existing guarded upload behavior.
 

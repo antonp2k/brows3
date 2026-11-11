@@ -356,6 +356,37 @@ export const objectApi = {
   },
 };
 
+export interface PreviewCacheLookup {
+  profile_id: string;
+  size: number;
+  last_modified: string | null;
+  content_type: string | null;
+  e_tag: string | null;
+  /** A local copy matching the remote object, or the last saved copy when `offline`. */
+  local_path: string | null;
+  /** The remote could not be reached; metadata and copy come from the local cache. */
+  offline: boolean;
+  /** False when the remote reports no modification date, so copies cannot be validated. */
+  cacheable: boolean;
+}
+
+export const previewCacheApi = {
+  lookup: (bucketName: string, bucketRegion: string | undefined, key: string) =>
+    invoke<PreviewCacheLookup>('preview_cache_lookup', { bucketName, bucketRegion, key }),
+  fill: (bucketName: string, bucketRegion: string | undefined, key: string, eTag: string | null, size: number, maxCacheBytes: number) =>
+    invoke<string>('preview_cache_fill', { bucketName, bucketRegion, key, eTag, size, maxCacheBytes }),
+  readText: (bucketName: string, key: string, maxBytes: number) =>
+    invoke<string>('preview_cache_read_text', { bucketName, key, maxBytes }),
+  remove: (bucketName: string, key: string) => invoke<void>('preview_cache_remove', { bucketName, key }),
+  usage: () => invoke<{ files: number; bytes: number }>('preview_cache_usage'),
+  clear: () => invoke<void>('clear_preview_cache'),
+  /** Converts a cached file path into a URL the webview can load through the asset protocol. */
+  async fileUrl(path: string) {
+    const { convertFileSrc } = await import('@tauri-apps/api/core');
+    return convertFileSrc(path);
+  },
+};
+
 export const operationsApi = {
   async copyBetweenProfiles(items: import('@/store/clipboardStore').ClipboardItem[], destinationBucket: string, destinationRegion: string, destinationPrefix: string, expectedProfileId: string): Promise<number> {
     if (expectedProfileId !== useProfileStore.getState().activeProfileId) {

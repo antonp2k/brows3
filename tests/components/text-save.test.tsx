@@ -1,9 +1,14 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, expect, test, vi } from 'vitest';
 import ObjectPreviewDialog from '@/components/dialogs/ObjectPreviewDialog';
-import { objectApi } from '@/lib/tauri';
+import { objectApi, previewCacheApi } from '@/lib/tauri';
 
-vi.mock('@/lib/tauri', () => ({ objectApi: { getObjectMetadata: vi.fn(), getObjectContent: vi.fn(), putObjectContent: vi.fn() }, copyToClipboard: vi.fn() }));
+vi.mock('@/lib/tauri', () => ({
+  objectApi: { getObjectMetadata: vi.fn(), getObjectContent: vi.fn(), putObjectContent: vi.fn() },
+  // Lookup failures fall back to loading from S3, which these tests exercise.
+  previewCacheApi: { lookup: vi.fn().mockRejectedValue(new Error('no cache')), remove: vi.fn().mockResolvedValue(undefined) },
+  copyToClipboard: vi.fn(),
+}));
 vi.mock('@monaco-editor/react', () => ({ default: ({ value, onChange, options }: { value: string; onChange: (value: string) => void; options: { readOnly: boolean } }) => <textarea aria-label="File content" value={value} readOnly={options.readOnly} onChange={event => onChange(event.target.value)} /> }));
 
 beforeEach(() => {
@@ -22,6 +27,7 @@ test('saves use the body ETag and update it for the next edit', async () => {
   fireEvent.change(editor, { target: { value: 'first edit' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
   await waitFor(() => expect(objectApi.putObjectContent).toHaveBeenCalledWith('bucket', 'region', 'file.txt', 'first edit', 'body-etag', 'profile-a'));
+  expect(previewCacheApi.remove).toHaveBeenCalledWith('bucket', 'file.txt');
   await waitFor(() => expect((screen.getByRole('button', { name: 'Save Changes' }) as HTMLButtonElement).disabled).toBe(true));
   fireEvent.change(editor, { target: { value: 'second edit' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));

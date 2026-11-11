@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod credentials;
 pub mod error;
+pub mod preview_cache;
 pub mod s3;
 pub mod transfer;
 
@@ -251,6 +252,18 @@ pub fn run() {
             app.manage(jobs.clone());
             commands::jobs::start_scheduler(app.handle().clone(), jobs);
 
+            let preview_cache = match app.path().app_cache_dir() {
+                Ok(dir) => Arc::new(preview_cache::PreviewCache::open(dir.join("preview-cache"))),
+                Err(error) => {
+                    log::error!("Local preview cache unavailable: {error}");
+                    Arc::new(preview_cache::PreviewCache::open(
+                        data_dir.join("preview-cache"),
+                    ))
+                }
+            };
+            app.manage(preview_cache.clone());
+            tauri::async_runtime::spawn(async move { preview_cache.reconcile().await });
+
             // Show the main window after initialization to prevent white flash
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -321,6 +334,12 @@ pub fn run() {
             operations::move_object,
             operations::delete_objects,
             operations::get_object_metadata,
+            commands::preview_cache::preview_cache_lookup,
+            commands::preview_cache::preview_cache_fill,
+            commands::preview_cache::preview_cache_read_text,
+            commands::preview_cache::preview_cache_remove,
+            commands::preview_cache::preview_cache_usage,
+            commands::preview_cache::clear_preview_cache,
             operations::set_object_content_type,
             operations::get_object_permissions,
             operations::set_object_permissions,

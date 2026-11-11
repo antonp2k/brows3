@@ -24,6 +24,10 @@ export class DesktopBackend {
   contentType = 'text/plain';
   etag = '"v1"';
   conflict = false;
+  /** Models the desktop preview cache. Off by default, like a provider without LastModified dates. */
+  localCache = false;
+  offline = false;
+  cached = new Map<string, string>();
   objects = [object('notes.txt'), object('sound.wav', 1644), object('nested/match.txt')];
   folders = ['nested/'];
 
@@ -99,6 +103,21 @@ export class DesktopBackend {
       }
       case 'search_objects': return { objects: this.objects.filter(item => item.key.includes(String(args.query))), scanned_objects: this.objects.length, is_truncated: false };
       case 'get_object_metadata': return { key: args.key, size: this.content.length, content_type: String(args.key).endsWith('.wav') ? 'audio/wav' : String(args.key).endsWith('.svg') ? 'image/svg+xml' : this.contentType, e_tag: this.etag, last_modified: null, storage_class: null, user_metadata: {} };
+      case 'preview_cache_lookup': {
+        const key = String(args.key);
+        const contentType = key.endsWith('.wav') ? 'audio/wav' : key.endsWith('.svg') ? 'image/svg+xml' : this.contentType;
+        if (this.offline) {
+          if (!this.cached.has(key)) throw new Error('dispatch failure');
+          return { profile_id: this.activeProfile, size: this.content.length, last_modified: '2026-01-01T00:00:00Z', content_type: contentType, e_tag: this.cached.get(key), local_path: `/cache/${key}`, offline: true, cacheable: true };
+        }
+        const hit = this.localCache && this.cached.get(key) === this.etag;
+        return { profile_id: this.activeProfile, size: this.content.length, last_modified: this.localCache ? '2026-01-01T00:00:00Z' : null, content_type: contentType, e_tag: this.etag, local_path: hit ? `/cache/${key}` : null, offline: false, cacheable: this.localCache };
+      }
+      case 'preview_cache_fill': this.cached.set(String(args.key), String(args.eTag)); return `/cache/${args.key}`;
+      case 'preview_cache_read_text': return this.content;
+      case 'preview_cache_remove': this.cached.delete(String(args.key)); return null;
+      case 'preview_cache_usage': return { files: this.cached.size, bytes: this.cached.size * this.content.length };
+      case 'clear_preview_cache': this.cached.clear(); return null;
       case 'get_object_content': return { content: this.content, e_tag: this.etag, profile_id: this.activeProfile };
       case 'put_object_content':
         if (this.conflict || args.expectedEtag !== this.etag) throw new Error('This object has changed since it was opened.');
@@ -213,6 +232,7 @@ export const test = base.extend<{ backend: DesktopBackend }>({
           metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } },
           transformCallback: (callback: (event: unknown) => void) => { callbacks.set(++nextId, callback); return nextId; },
           unregisterCallback: (id: number) => callbacks.delete(id),
+          convertFileSrc: (path: string) => `https://cache.brows3.test${path}`,
           invoke: (command: string, args: Record<string, unknown>) => {
             if (command === 'plugin:event|listen') return Promise.resolve(args.handler);
             if (command === 'plugin:event|unlisten') { callbacks.delete(Number(args.eventId)); return Promise.resolve(); }

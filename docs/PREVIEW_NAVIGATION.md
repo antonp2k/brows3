@@ -15,10 +15,31 @@ Context identity guards prevent completed requests from navigating a closed prev
 While a preview is open, the previous and next previewable files are loaded in advance so navigation shows them without a spinner. The window slides: opening a preview loads both neighbours after the visible file has loaded, Next loads one more next file, and Previous loads one more previous file. Files outside the window are evicted.
 
 - Only neighbours smaller than 10 MB (by listing size) are prefetched. Larger files load when they become visible.
-- Text files are loaded in full, within the text preview size limit. Images get a signed URL and their bytes decoded in advance. Video, audio, and PDF files get metadata and a signed URL only.
+- Images, PDFs and text files are saved to the local preview cache (see below); images are also decoded in advance. Video and audio files get metadata and a signed URL only.
 - Prefetching never loads additional listing pages.
-- Signed URLs are reused for 50 minutes and text for 5 minutes. Failed loads are not cached, and Retry always requests a fresh load.
+- Signed URLs are reused for 50 minutes; text and local copies are rechecked against S3 after 5 minutes. Failed loads are not cached, and Retry always requests a fresh load.
 - Closing the preview, saving, object cache invalidation, and profile, bucket, or text-limit changes discard prefetched content. Saving prefetched text remains ETag-guarded.
+
+## Local preview cache
+
+Images, PDFs and text files that are previewed or prefetched are stored on disk, in the app cache directory under `preview-cache/files/<profile id>/<bucket>/<object key>`. The folder structure mirrors the remote keys. Video and audio are always streamed from S3.
+
+When a file is opened:
+
+1. The app asks S3 for the object's size, `LastModified` and ETag (one HEAD request).
+2. If a local copy exists and its size, modification date and ETag all match, the local copy is shown.
+3. Otherwise the object is downloaded into the cache, pinned to the ETag it was checked against (`If-Match`). Its file modification time is set to the object's `LastModified`, and it replaces the old copy atomically.
+4. If S3 cannot be reached and a local copy exists, that copy is shown with an "Offline copy" label. Offline results are rechecked after 30 seconds.
+
+Details:
+
+- ETags, sizes, dates and last-access times are kept in `preview-cache/index.json`. A copy whose file was changed on disk, or that is missing from the index, is never trusted.
+- Key segments that are not valid file names on every platform are percent-encoded: `%`, `<>:"|?*\`, control characters, trailing dots or spaces, Windows device names such as `CON`, and empty, `.` or `..` segments. Keys that differ only in letter case never share a copy, even on case-insensitive file systems.
+- An object whose name matches an existing cached folder (for example `photos` next to `photos/a.jpg`) is previewed from S3 without being cached.
+- Objects over 100 MB, text over the text preview limit, and objects without a `LastModified` date are not cached.
+- Above the size limit in Settings (default 1 GB), the least recently used copies are removed. Settings can also disable or clear the cache. Deleting a profile removes its cached files. Saving a text file removes its copy, so the next preview downloads the new version.
+- On startup, orphaned files, index entries without intact files, and partial downloads older than one hour are removed.
+- The webview loads cached files through Tauri's asset protocol, scoped to `$APPCACHE/preview-cache/files/**`.
 
 ## Controls and draft protection
 
@@ -35,7 +56,9 @@ The existing image viewer and BaseDialog remain authoritative. Preserve their li
 | Source | Responsibility |
 | --- | --- |
 | `src/hooks/usePreviewNavigation.ts` | Previewable sequence, boundaries, bounded pagination, retry feedback, and stale-result guards |
-| `src/lib/previewPrefetch.ts` | Shared preview loader, prefetch size limit, and request cache with expiry |
+| `src/lib/previewPrefetch.ts` | Shared preview loader (local cache first, S3 fallback), prefetch size limit, and request cache with expiry |
+| `src-tauri/src/preview_cache.rs` | On-disk layout, key encoding, version index, validation, eviction and cleanup |
+| `src-tauri/src/commands/preview_cache.rs` | HEAD with offline fallback, ETag-pinned fill, cached text reads, usage and clearing |
 | `src/hooks/usePreviewPrefetch.ts` | Sliding previous/next prefetch window and cache clearing |
 | `src/lib/objectSort.ts` | Shared table and preview comparison for name, size, date, and storage class |
 | `src/components/dialogs/ObjectPreviewDialog.tsx` | Mixed file previews, selection controls, keyboard exclusions, editing and discard protection |

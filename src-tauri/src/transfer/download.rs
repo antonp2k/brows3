@@ -102,13 +102,24 @@ impl PendingDownload {
     }
 
     pub async fn finish_writing(&mut self) -> io::Result<()> {
+        self.finish_writing_with_modified(None).await
+    }
+
+    /// Finishes writing and optionally stamps the file's modification time before it is committed.
+    pub async fn finish_writing_with_modified(
+        &mut self,
+        modified: Option<std::time::SystemTime>,
+    ) -> io::Result<()> {
         let file = self
             .file
             .as_mut()
             .ok_or_else(|| io::Error::other("Download is closed"))?;
         file.flush().await?;
         file.sync_all().await?;
-        self.file.take();
+        let file = self.file.take().expect("file checked above");
+        if let Some(modified) = modified {
+            file.into_std().await.set_modified(modified)?;
+        }
         Ok(())
     }
 

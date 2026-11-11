@@ -56,9 +56,21 @@ pub async fn update_profile(
 }
 
 #[tauri::command]
-pub async fn delete_profile(id: String, state: State<'_, ProfileState>) -> Result<(), String> {
+pub async fn delete_profile(
+    id: String,
+    state: State<'_, ProfileState>,
+    preview_cache: State<'_, crate::preview_cache::PreviewCacheState>,
+) -> Result<(), String> {
     let mut manager = state.write().await;
-    manager.delete_profile(&id).await.map_err(|e| e.to_string())
+    manager
+        .delete_profile(&id)
+        .await
+        .map_err(|e| e.to_string())?;
+    drop(manager);
+    if let Err(error) = preview_cache.clear(Some(&id)).await {
+        log::warn!("Could not remove the deleted profile's cached previews: {error}");
+    }
+    Ok(())
 }
 
 #[tauri::command]

@@ -14,7 +14,7 @@ const MAX_SEARCH_REQUESTS: usize = 100;
 const DEFAULT_MAX_TEXT_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_TEXT_PREVIEW_BYTES: u64 = 100 * 1024 * 1024;
 
-fn normalized_text_preview_limit(max_bytes: Option<u64>) -> u64 {
+pub(crate) fn normalized_text_preview_limit(max_bytes: Option<u64>) -> u64 {
     max_bytes
         .unwrap_or(DEFAULT_MAX_TEXT_PREVIEW_BYTES)
         .clamp(1, MAX_TEXT_PREVIEW_BYTES)
@@ -59,6 +59,21 @@ fn is_likely_binary_text_mismatch(bytes: &[u8]) -> bool {
     }
 
     control_count.saturating_mul(100) > bytes.len().saturating_mul(5)
+}
+
+/// Rejects binary and non-UTF-8 content before it reaches the text editor.
+pub(crate) fn decode_preview_text(bytes: Vec<u8>) -> Result<String> {
+    if is_likely_binary_text_mismatch(&bytes) {
+        return Err(crate::error::AppError::InvalidContent(
+            "This object appears to contain binary data and cannot be edited safely in the text editor. Download it to inspect locally.".to_string(),
+        ));
+    }
+    String::from_utf8(bytes).map_err(|_| {
+        crate::error::AppError::InvalidContent(
+            "This object is not readable as UTF-8 text. Download it to inspect locally."
+                .to_string(),
+        )
+    })
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1021,18 +1036,7 @@ pub async fn get_object_content(
         bytes.extend_from_slice(&chunk);
     }
 
-    if is_likely_binary_text_mismatch(&bytes) {
-        return Err(crate::error::AppError::InvalidContent(
-            "This object appears to contain binary data and cannot be edited safely in the text editor. Download it to inspect locally.".to_string(),
-        ));
-    }
-
-    let content = String::from_utf8(bytes).map_err(|_| {
-        crate::error::AppError::InvalidContent(
-            "This object is not readable as UTF-8 text. Download it to inspect locally."
-                .to_string(),
-        )
-    })?;
+    let content = decode_preview_text(bytes)?;
     Ok(ObjectText {
         content,
         e_tag,

@@ -22,6 +22,8 @@ interface Props {
   navigationLabel?: 'image' | 'file';
   navigationBusy?: boolean;
   navigationError?: string;
+  /** A status shown above the image, such as an offline-copy warning. */
+  notice?: string;
   isSelected?: boolean;
   onToggleSelect?: () => void;
 }
@@ -53,7 +55,7 @@ export default function ImagePreviewViewer(props: Props) {
   );
 }
 
-function ImagePreviewCanvas({ open, name, url, error, onClose, onRetry, titleId, index = 0, total = 0, onPrevious, onNext, navigationLabel = 'image', navigationBusy = false, navigationError, isSelected = false, onToggleSelect }: Props & { titleId: string }) {
+function ImagePreviewCanvas({ open, name, url, error, onClose, onRetry, titleId, index = 0, total = 0, onPrevious, onNext, navigationLabel = 'image', navigationBusy = false, navigationError, notice, isSelected = false, onToggleSelect }: Props & { titleId: string }) {
   const helpId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -247,6 +249,7 @@ function ImagePreviewCanvas({ open, name, url, error, onClose, onRetry, titleId,
           )}
         </Box>
       </Box>
+      {notice && <Typography role="status" variant="body2" sx={{ px: 2, py: 1, bgcolor: 'warning.main', color: 'warning.contrastText' }}>{notice}</Typography>}
       {(navigationBusy || navigationError) && <Typography role="status" variant="body2" sx={{ px: 2, py: 1, bgcolor: 'background.paper' }}>{navigationBusy ? 'Looking for the next previewable file...' : navigationError}</Typography>}
       {navigable && <>
         <Tooltip title={`Previous ${navigationLabel} (Left)`}><span style={{ position: 'absolute', left: 20, top: '50%' }}><IconButton aria-label={`Previous ${navigationLabel}`} disabled={!onPrevious || navigationBusy} onClick={onPrevious} sx={{ ...chromeButton, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}><ChevronLeft fontSize="small" /></IconButton></span></Tooltip>

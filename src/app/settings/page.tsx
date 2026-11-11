@@ -34,13 +34,16 @@ import {
 import {
   MAX_TEXT_PREVIEW_SIZE_MB,
   MIN_TEXT_PREVIEW_SIZE_MB,
+  MAX_LOCAL_CACHE_MB,
+  MIN_LOCAL_CACHE_MB,
   useSettingsStore,
 } from '@/store/settingsStore';
 import { useAppStore } from '@/store/appStore';
 import { useMonitorStore } from '@/store/monitorStore';
 import { invalidateBucketCache } from '@/hooks/useBuckets';
 import { toast } from '@/store/toastStore';
-import { bucketApi, copyToClipboard, invalidateCache, isTauri, logApi, transferApi, type LogFileInfo } from '@/lib/tauri';
+import { bucketApi, copyToClipboard, invalidateCache, isTauri, logApi, previewCacheApi, transferApi, type LogFileInfo } from '@/lib/tauri';
+import { previewCache } from '@/lib/previewPrefetch';
 
 export default function SettingsPage() {
   // Theme is controlled by appStore (used by the actual app)
@@ -51,8 +54,32 @@ export default function SettingsPage() {
     maxConcurrentTransfers, setMaxConcurrentTransfers,
     transferBandwidthKiB, setTransferBandwidthKiB,
     maxTextPreviewSizeMb, setMaxTextPreviewSizeMb,
-    autoRefreshOnFocus, setAutoRefreshOnFocus
+    autoRefreshOnFocus, setAutoRefreshOnFocus,
+    localCacheEnabled, setLocalCacheEnabled,
+    localCacheMaxMb, setLocalCacheMaxMb,
   } = useSettingsStore();
+  const [pendingCacheLimit, setPendingCacheLimit] = useState(localCacheMaxMb);
+  const [cacheUsage, setCacheUsage] = useState<{ files: number; bytes: number } | null>(null);
+  const [clearingLocalCache, setClearingLocalCache] = useState(false);
+  const refreshCacheUsage = () => {
+    if (!isTauri()) return;
+    previewCacheApi.usage().then(setCacheUsage).catch(() => setCacheUsage(null));
+  };
+  useEffect(refreshCacheUsage, []);
+  useEffect(() => { setPendingCacheLimit(localCacheMaxMb); }, [localCacheMaxMb]);
+  const handleClearLocalCache = async () => {
+    setClearingLocalCache(true);
+    try {
+      await previewCacheApi.clear();
+      previewCache.clear();
+      toast.success('Local cache cleared', 'Previews will be downloaded again when opened.');
+    } catch (error) {
+      toast.error('Could not clear the local cache', String(error));
+    } finally {
+      setClearingLocalCache(false);
+      refreshCacheUsage();
+    }
+  };
   
   const [version, setVersion] = useState<string>('...');
   const [appDataDir, setAppDataDir] = useState<string>('Loading...');
@@ -254,7 +281,7 @@ export default function SettingsPage() {
           <ListItem divider>
             <ListItemText
               primary="Text Preview Size Limit"
-              secondary={`Load text, HTML, and code objects up to ${pendingPreviewLimit} MB. Images, audio, video, and PDFs are streamed and do not use this memory limit.`}
+              secondary={`Load text, HTML, and code objects up to ${pendingPreviewLimit} MB. Audio and video are streamed; images and PDFs do not use this memory limit.`}
             />
             <Box sx={{ width: 200, mr: 2 }}>
               <Slider
@@ -274,6 +301,50 @@ export default function SettingsPage() {
                   }
                 }}
               />
+            </Box>
+          </ListItem>
+          <ListItem divider>
+            <ListItemText
+              primary="Local Preview Cache"
+              secondary="Keep previewed and prefetched images, PDFs and text files on disk. A copy is reused only while its size, date and ETag match the remote object; offline, the last copy is shown with a label."
+            />
+            <ListItemSecondaryAction>
+              <Switch
+                edge="end"
+                checked={localCacheEnabled}
+                inputProps={{ 'aria-label': 'Local preview cache' }}
+                onChange={(e) => {
+                  setLocalCacheEnabled(e.target.checked);
+                  previewCache.clear();
+                  toast.success('Local cache updated', `Local preview cache ${e.target.checked ? 'enabled' : 'disabled'}`);
+                }}
+              />
+            </ListItemSecondaryAction>
+          </ListItem>
+          <ListItem divider>
+            <ListItemText
+              primary="Local Cache Size Limit"
+              secondary={`Least recently used copies are removed above ${pendingCacheLimit >= 1024 ? `${(pendingCacheLimit / 1024).toFixed(1)} GB` : `${pendingCacheLimit} MB`}. In use: ${cacheUsage ? `${(cacheUsage.bytes / 1024 / 1024).toFixed(1)} MB in ${cacheUsage.files} files` : 'unknown'}.`}
+            />
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mr: 2 }}>
+              <Slider
+                sx={{ width: 160 }}
+                value={pendingCacheLimit}
+                min={MIN_LOCAL_CACHE_MB}
+                max={MAX_LOCAL_CACHE_MB}
+                step={100}
+                valueLabelDisplay="auto"
+                valueLabelFormat={(value) => `${value} MB`}
+                onChange={(_, value) => setPendingCacheLimit(value as number)}
+                onChangeCommitted={(_, value) => {
+                  const nextValue = value as number;
+                  setPendingCacheLimit(nextValue);
+                  if (nextValue !== localCacheMaxMb) setLocalCacheMaxMb(nextValue);
+                }}
+              />
+              <Button size="small" variant="outlined" sx={{ borderRadius: '999px', color: 'text.primary', whiteSpace: 'nowrap' }} disabled={!isTauri() || clearingLocalCache} onClick={handleClearLocalCache}>
+                {clearingLocalCache ? 'Clearing...' : 'Clear'}
+              </Button>
             </Box>
           </ListItem>
           <ListItem>

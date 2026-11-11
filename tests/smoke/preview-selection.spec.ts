@@ -92,7 +92,7 @@ test('discarding edits resets the baseline when editing is reopened', async ({ p
 
 test('previews prefetch small neighbours and only fetch the newly adjacent file on each step', async ({ page, backend }) => {
   backend.objects.push({ key: 'zz.svg', size: 20 * 1024 * 1024, last_modified: null, storage_class: 'STANDARD' });
-  const loads = (key: string) => backend.calls.filter(call => call.command === 'get_object_metadata' && call.args.key === key).length;
+  const loads = (key: string) => backend.calls.filter(call => call.command === 'preview_cache_lookup' && call.args.key === key).length;
   await page.goto(bucket);
   await page.getByRole('row').filter({ hasText: 'a.svg' }).getByTitle('Preview', { exact: true }).click();
   await expect(page.getByRole('img', { name: 'a.svg' })).toBeVisible();
@@ -116,4 +116,36 @@ test('previews prefetch small neighbours and only fetch the newly adjacent file 
   await page.keyboard.press('ArrowLeft');
   await expect(page.getByRole('img', { name: 'z.svg' })).toBeVisible();
   expect(loads('z.svg')).toBe(1);
+});
+
+test('the local cache reuses matching copies, downloads changed ones and labels offline copies', async ({ page, backend }) => {
+  backend.localCache = true;
+  backend.objects = [{ key: 'a.svg', size: 100, last_modified: null, storage_class: 'STANDARD' }];
+  await page.route('https://cache.brows3.test/**', route => route.fulfill({ contentType: 'image/svg+xml', body: svg }));
+  const count = (command: string) => backend.calls.filter(call => call.command === command && call.args.key === 'a.svg').length;
+  const open = async () => {
+    await page.getByRole('row').filter({ hasText: 'a.svg' }).getByTitle('Preview', { exact: true }).click();
+    await expect(page.getByRole('img', { name: 'a.svg' })).toHaveAttribute('src', 'https://cache.brows3.test/cache/a.svg');
+  };
+  await page.goto(bucket);
+
+  await open();
+  expect([count('preview_cache_fill'), count('get_presigned_url')]).toEqual([1, 0]);
+  await page.keyboard.press('Escape');
+
+  await open();
+  expect(count('preview_cache_lookup')).toBe(2);
+  expect(count('preview_cache_fill')).toBe(1);
+  await page.keyboard.press('Escape');
+
+  backend.etag = '"changed"';
+  await open();
+  expect(count('preview_cache_fill')).toBe(2);
+  await expect(page.getByText(/Offline copy/)).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  backend.offline = true;
+  await open();
+  await expect(page.getByRole('status').filter({ hasText: 'Offline copy' })).toBeVisible();
+  expect(count('preview_cache_fill')).toBe(2);
 });

@@ -13,14 +13,14 @@ import {
   Save as SaveIcon,
   ContentCopy as CopyIcon,
 } from '@mui/icons-material';
-import { copyToClipboard, objectApi } from '@/lib/tauri';
+import { copyToClipboard, objectApi, previewCacheApi } from '@/lib/tauri';
 import Editor from '@monaco-editor/react';
 import { toast } from '@/store/toastStore';
 import { BaseDialog } from '../common/BaseDialog';
 import ImagePreviewViewer from './ImagePreviewViewer';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 import { getEditorLanguage, getObjectExtension, getObjectKind, getObjectName } from '@/lib/objectCapabilities';
-import { previewCache, usePreviewContext, type PreviewPayload } from '@/lib/previewPrefetch';
+import { OFFLINE_NOTICE, previewCache, usePreviewContext, type PreviewPayload } from '@/lib/previewPrefetch';
 
 interface ObjectPreviewDialogProps {
   open: boolean;
@@ -61,6 +61,7 @@ export default function ObjectPreviewDialog({
   const [editedContent, setEditedContent] = useState<string>('');
   const [contentType, setContentType] = useState<string | null>(null);
   const [presignedUrl, setPresignedUrl] = useState<string | null>(null);
+  const [offline, setOffline] = useState(false);
   const [isEditing, setIsEditing] = useState(startInEditMode);
   const [isSaving, setIsSaving] = useState(false);
   const [textIdentity, setTextIdentity] = useState<{ etag: string | null; profileId: string } | null>(null);
@@ -108,6 +109,7 @@ export default function ObjectPreviewDialog({
       setEditedContent('');
       setContentType(null);
       setPresignedUrl(null);
+      setOffline(false);
       setIsEditing(startInEditMode); // Reset edit mode based on prop
       if (loadTimeoutRef.current) {
         clearTimeout(loadTimeoutRef.current);
@@ -122,6 +124,7 @@ export default function ObjectPreviewDialog({
       const apply = (payload: PreviewPayload) => {
         setContentType(payload.contentType);
         if (payload.kind === 'unavailable') { setError(payload.message); return; }
+        setOffline(!!payload.offline);
         if (payload.kind === 'text') {
           // Even if empty, it's valid content
           setContent(payload.content);
@@ -194,7 +197,10 @@ export default function ObjectPreviewDialog({
     try {
       const etag = await objectApi.putObjectContent(bucketName, bucketRegion, objectKey, editedContent, textIdentity.etag, textIdentity.profileId);
       previewCache.delete(previewContext, objectKey);
+      // The saved object has a new version; the next preview downloads a fresh local copy.
+      void previewCacheApi.remove(bucketName, objectKey).catch(() => undefined);
       if (requestId !== loadRequestIdRef.current) return;
+      setOffline(false);
       setTextIdentity({ ...textIdentity, etag });
       setContent(editedContent);
       toast.success('File Saved', `${filename} saved successfully`);
@@ -245,6 +251,7 @@ export default function ObjectPreviewDialog({
     return <ImagePreviewViewer
       key={JSON.stringify([bucketName, bucketRegion])}
       open={open} name={filename} url={isLoading || loadedObjectKey !== objectKey ? null : presignedUrl} error={loadedObjectKey === objectKey ? error : null} attempt={reloadAttempt}
+      notice={!isLoading && loadedObjectKey === objectKey && offline ? OFFLINE_NOTICE : undefined}
       index={index} total={navigation?.total ?? (index >= 0 ? imageSequence.length : 0)}
       onPrevious={navigation ? navigation.onPrevious : onNavigateImage && index > 0 ? () => onNavigateImage(imageSequence[index - 1]) : undefined}
       onNext={navigation ? navigation.onNext : onNavigateImage && index >= 0 && index < imageSequence.length - 1 ? () => onNavigateImage(imageSequence[index + 1]) : undefined}
@@ -373,6 +380,8 @@ export default function ObjectPreviewDialog({
             <Alert severity="error" variant="filled" sx={{ borderRadius: 2 }}>{error}</Alert>
           </Box>
         )}
+
+        {!isLoading && offline && <Alert severity="warning" sx={{ mb: 1 }}>{OFFLINE_NOTICE}</Alert>}
 
         {!isLoading && isText && textIdentity && !textIdentity.etag && (
           <Alert severity="warning">This provider did not return an ETag. Download or copy the text to edit it safely.</Alert>
